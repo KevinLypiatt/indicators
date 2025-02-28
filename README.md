@@ -1,4 +1,2 @@
 # indicators
-Financial indicators project
-# indicators
-# indicators
+Financial indicators
