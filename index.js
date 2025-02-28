@@ -8,6 +8,7 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.static('public'));
+app.use(express.urlencoded({ extended: true }));
 
 const pool = new Pool({
   host: process.env.DB_HOST,
@@ -61,10 +62,8 @@ const dataCollector = async () => {
   try {
     const response = await axios.get('https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD');
     const quotes = response.data;
-    console.log('Swissquote response:', JSON.stringify(quotes, null, 2));
     const goldData = quotes[0]?.spreadProfilePrices[0];
     const goldPrice = goldData?.bid;
-    console.log('Parsed gold price:', goldPrice);
     if (goldPrice && !isNaN(goldPrice)) {
       await pool.query(
         'INSERT INTO time_series (indicator_type, indicator_country, indicator_value) VALUES ($1, $2, $3)',
@@ -96,26 +95,44 @@ const scheduleDataCollection = () => {
 
 app.get('/dashboard', async (req, res) => {
   try {
+    // Get the latest price
     const latest = await pool.query(`
       SELECT timestamp, indicator_value 
       FROM time_series 
       ORDER BY timestamp DESC 
       LIMIT 1
     `);
-    const latestPrice = Number(latest.rows[0]?.indicator_value) || 0; // Convert to number
+    const latestPrice = Number(latest.rows[0]?.indicator_value) || 0;
     const latestTime = latest.rows[0]?.timestamp.toLocaleString() || 'N/A';
+    console.log('Latest price:', latestPrice, 'at', latestTime);
 
+    // Get parameters for collection window
+    const { rows: paramsRows } = await pool.query('SELECT param_name, param_value FROM parameters');
+    const params = Object.fromEntries(paramsRows.map(row => [row.param_name, row.param_value]));
+    const startHour = parseInt(params.start_time.split(':')[0], 10);
+    const endHour = parseInt(params.end_time.split(':')[0], 10);
+
+    // Get the last price from the previous day's collection window
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStart = new Date(yesterday);
+    yesterdayStart.setHours(startHour, 0, 0, 0);
+    const yesterdayEnd = new Date(yesterday);
+    yesterdayEnd.setHours(endHour, 0, 0, 0);
+
     const prevDayLast = await pool.query(`
-      SELECT indicator_value 
+      SELECT indicator_value, timestamp
       FROM time_series 
-      WHERE timestamp < $1::date 
+      WHERE timestamp BETWEEN $1 AND $2
       ORDER BY timestamp DESC 
       LIMIT 1
-    `, [yesterday]);
-    const prevPrice = Number(prevDayLast.rows[0]?.indicator_value) || latestPrice; // Convert to number
-    const percentChange = prevPrice ? (((latestPrice - prevPrice) / prevPrice) * 100).toFixed(2) : 'N/A';
+    `, [yesterdayStart, yesterdayEnd]);
+    
+    const prevPrice = prevDayLast.rows[0] ? Number(prevDayLast.rows[0].indicator_value) : null;
+    const prevTime = prevDayLast.rows[0]?.timestamp.toLocaleString() || 'N/A';
+    console.log('Previous day last price:', prevPrice, 'at', prevTime);
+
+    const percentChange = prevPrice !== null ? (((latestPrice - prevPrice) / prevPrice) * 100).toFixed(2) : 'N/A';
 
     res.send(`
       <!DOCTYPE html>
@@ -133,7 +150,7 @@ app.get('/dashboard', async (req, res) => {
         <h1>Gold Price Dashboard</h1>
         <div class="price">$${latestPrice.toFixed(2)}</div>
         <p>Last Updated: ${latestTime}</p>
-        <p>Change from Yesterday: 
+        <p>Change from Yesterday's Last (at ${prevTime}): 
           <span class="${percentChange > 0 ? 'change-positive' : 'change-negative'}">
             ${percentChange !== 'N/A' ? percentChange + '%' : 'N/A'}
           </span>
@@ -148,8 +165,200 @@ app.get('/dashboard', async (req, res) => {
   }
 });
 
-app.get('/settings', (req, res) => {
-  res.send('<h1>Settings Page</h1><p>Coming soon!</p><a href="/dashboard">Back to Dashboard</a>');
+// Settings routes (unchanged from previous)
+app.get('/settings', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM time_series ORDER BY timestamp DESC');
+    let tableRows = rows.map(row => `
+      <tr>
+        <td>${row.id}</td>
+        <td><span hx-get="/settings/edit/${row.id}/timestamp" hx-target="this" hx-swap="outerHTML">${row.timestamp.toLocaleString()}</span></td>
+        <td><span hx-get="/settings/edit/${row.id}/indicator_type" hx-target="this" hx-swap="outerHTML">${row.indicator_type}</span></td>
+        <td><span hx-get="/settings/edit/${row.id}/indicator_country" hx-target="this" hx-swap="outerHTML">${row.indicator_country}</span></td>
+        <td><span hx-get="/settings/edit/${row.id}/indicator_value" hx-target="this" hx-swap="outerHTML">${Number(row.indicator_value).toFixed(2)}</span></td>
+        <td><button hx-delete="/settings/delete/${row.id}" hx-target="closest tr" hx-swap="outerHTML" hx-confirm="Are you sure?">Delete</button></td>
+      </tr>
+    `).join('');
+
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Settings - Gold Price Data</title>
+        <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 20px; }
+          table { width: 100%; border-collapse: collapse; }
+          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+          th { background-color: #f2f2f2; }
+          button { padding: 5px 10px; }
+          input { width: 100px; }
+          input[type="datetime-local"] { width: 180px; }
+        </style>
+      </head>
+      <body>
+        <h1>Settings - Edit Gold Price Data</h1>
+        <form hx-post="/settings/add" hx-target="#data-table tbody" hx-swap="beforeend">
+          <input type="text" name="indicator_type" value="gold" readonly>
+          <input type="text" name="indicator_country" value="USA" readonly>
+          <input type="number" name="indicator_value" step="0.01" placeholder="Value" required>
+          <button type="submit">Add</button>
+        </form>
+        <table id="data-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Timestamp</th>
+              <th>Type</th>
+              <th>Country</th>
+              <th>Value</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tableRows}
+          </tbody>
+        </table>
+        <p><a href="/dashboard">Back to Dashboard</a></p>
+      </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error('Error loading settings:', err.message);
+    res.status(500).send('Error loading settings');
+  }
+});
+
+app.get('/settings/edit/:id/:field', async (req, res) => {
+  const { id, field } = req.params;
+  try {
+    const { rows } = await pool.query('SELECT * FROM time_series WHERE id = $1', [id]);
+    const row = rows[0];
+    let inputHtml = '';
+    switch (field) {
+      case 'timestamp':
+        const timestampISO = row.timestamp.toISOString().slice(0, 16);
+        inputHtml = `<input type="datetime-local" name="timestamp" value="${timestampISO}" required>`;
+        break;
+      case 'indicator_type':
+        inputHtml = `<input type="text" name="indicator_type" value="${row.indicator_type}" required>`;
+        break;
+      case 'indicator_country':
+        inputHtml = `<input type="text" name="indicator_country" value="${row.indicator_country}" required>`;
+        break;
+      case 'indicator_value':
+        inputHtml = `<input type="number" name="indicator_value" value="${Number(row.indicator_value).toFixed(2)}" step="0.01" required>`;
+        break;
+    }
+    res.send(`
+      <td>
+        <form hx-put="/settings/edit/${id}" hx-target="this" hx-swap="outerHTML">
+          ${inputHtml}
+          <button type="submit">Save</button>
+          <button hx-get="/settings/cancel/${id}/${field}" type="button">Cancel</button>
+        </form>
+      </td>
+    `);
+  } catch (err) {
+    console.error('Error loading edit form:', err.message);
+    res.status(500).send('Error');
+  }
+});
+
+app.get('/settings/cancel/:id/:field', async (req, res) => {
+  const { id, field } = req.params;
+  try {
+    const { rows } = await pool.query('SELECT * FROM time_series WHERE id = $1', [id]);
+    const row = rows[0];
+    let value = '';
+    switch (field) {
+      case 'timestamp': value = row.timestamp.toLocaleString(); break;
+      case 'indicator_type': value = row.indicator_type; break;
+      case 'indicator_country': value = row.indicator_country; break;
+      case 'indicator_value': value = Number(row.indicator_value).toFixed(2); break;
+    }
+    res.send(`
+      <span hx-get="/settings/edit/${id}/${field}" hx-target="this" hx-swap="outerHTML">
+        ${value}
+      </span>
+    `);
+  } catch (err) {
+    console.error('Error canceling edit:', err.message);
+    res.status(500).send('Error');
+  }
+});
+
+app.put('/settings/edit/:id', async (req, res) => {
+  const { id } = req.params;
+  const { timestamp, indicator_type, indicator_country, indicator_value } = req.body;
+  try {
+    const updates = {};
+    if (timestamp) updates.timestamp = timestamp;
+    if (indicator_type) updates.indicator_type = indicator_type;
+    if (indicator_country) updates.indicator_country = indicator_country;
+    if (indicator_value) updates.indicator_value = Number(indicator_value).toFixed(2);
+
+    const fields = Object.keys(updates);
+    if (fields.length > 0) {
+      const setClause = fields.map((f, i) => `${f} = $${i + 1}`).join(', ');
+      const values = fields.map(f => updates[f]);
+      values.push(id);
+      await pool.query(
+        `UPDATE time_series SET ${setClause} WHERE id = $${fields.length + 1}`,
+        values
+      );
+    }
+
+    const { rows } = await pool.query('SELECT * FROM time_series WHERE id = $1', [id]);
+    const row = rows[0];
+    const field = fields[0];
+    const value = field === 'timestamp' ? row.timestamp.toLocaleString() : 
+                  field === 'indicator_value' ? Number(row.indicator_value).toFixed(2) : 
+                  row[field];
+    res.send(`
+      <span hx-get="/settings/edit/${id}/${field}" hx-target="this" hx-swap="outerHTML">
+        ${value}
+      </span>
+    `);
+  } catch (err) {
+    console.error('Error updating row:', err.message);
+    res.status(500).send('Error');
+  }
+});
+
+app.post('/settings/add', async (req, res) => {
+  const { indicator_type, indicator_country, indicator_value } = req.body;
+  try {
+    const { rows } = await pool.query(
+      'INSERT INTO time_series (indicator_type, indicator_country, indicator_value) VALUES ($1, $2, $3) RETURNING *',
+      [indicator_type, indicator_country, Number(indicator_value).toFixed(2)]
+    );
+    const row = rows[0];
+    res.send(`
+      <tr>
+        <td>${row.id}</td>
+        <td><span hx-get="/settings/edit/${row.id}/timestamp" hx-target="this" hx-swap="outerHTML">${row.timestamp.toLocaleString()}</span></td>
+        <td><span hx-get="/settings/edit/${row.id}/indicator_type" hx-target="this" hx-swap="outerHTML">${row.indicator_type}</span></td>
+        <td><span hx-get="/settings/edit/${row.id}/indicator_country" hx-target="this" hx-swap="outerHTML">${row.indicator_country}</span></td>
+        <td><span hx-get="/settings/edit/${row.id}/indicator_value" hx-target="this" hx-swap="outerHTML">${Number(row.indicator_value).toFixed(2)}</span></td>
+        <td><button hx-delete="/settings/delete/${row.id}" hx-target="closest tr" hx-swap="outerHTML" hx-confirm="Are you sure?">Delete</button></td>
+      </tr>
+    `);
+  } catch (err) {
+    console.error('Error adding row:', err.message);
+    res.status(500).send('Error');
+  }
+});
+
+app.delete('/settings/delete/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await pool.query('DELETE FROM time_series WHERE id = $1', [id]);
+    res.send('');
+  } catch (err) {
+    console.error('Error deleting row:', err.message);
+    res.status(500).send('Error');
+  }
 });
 
 app.get('/', (req, res) => {
@@ -160,7 +369,7 @@ const startApp = async () => {
   try {
     await createTables();
     scheduleDataCollection();
-    await dataCollector(); // Runs immediately for testing
+    // await dataCollector(); // Commented out after testing
     app.listen(port, () => {
       console.log(`App running on port ${port}`);
     });
