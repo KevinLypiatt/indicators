@@ -20,58 +20,96 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-const THRESHOLD = parseFloat(process.env.PRICE_CHANGE_THRESHOLD) || 0.49;
 const EMAIL_RECIPIENTS = process.env.ALERT_EMAILS.split(',');
+
+async function getMonitoringSettings() {
+  const result = await pool.query(`
+    SELECT param_name, param_value
+    FROM parameters 
+    WHERE param_name IN ('start_time', 'end_time')
+  `);
+  
+  const settings = {
+    startTime: '08:00',  // default values
+    endTime: '17:00'
+  };
+
+  result.rows.forEach(row => {
+    if (row.param_name === 'start_time') settings.startTime = row.param_value;
+    if (row.param_name === 'end_time') settings.endTime = row.param_value;
+  });
+  
+  console.log('Monitoring settings:', settings);
+  return settings;
+}
 
 async function checkPriceChange() {
   try {
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(today.getDate() - 1);
+    const settings = await getMonitoringSettings();
+    const now = new Date();
+    const monitoringTime = now.getHours().toString().padStart(2, '0') + ':' + 
+                          now.getMinutes().toString().padStart(2, '0');
     
-    const todayStart = new Date(today.setHours(0, 0, 0, 0));
-    const todayEnd = new Date(today.setHours(23, 59, 59, 999));
-    
-    const latestToday = await pool.query(`
-      SELECT indicator_value, timestamp 
+    if (monitoringTime < settings.startTime || monitoringTime > settings.endTime) {
+      console.log(`Outside monitoring hours (${settings.startTime}-${settings.endTime}): ${monitoringTime}`);
+      return;
+    }
+
+    // Get latest price
+    const latestPrice = await pool.query(`
+      SELECT price as value, timestamp 
       FROM time_series 
-      WHERE timestamp BETWEEN $1 AND $2
       ORDER BY timestamp DESC 
       LIMIT 1
-    `, [todayStart, todayEnd]);
+    `);
 
+    // Get last price from previous day
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStart = new Date(yesterday.setHours(0, 0, 0, 0));
     const yesterdayEnd = new Date(yesterday.setHours(23, 59, 59, 999));
 
-    const latestYesterday = await pool.query(`
-      SELECT indicator_value, timestamp 
+    const lastYesterdayPrice = await pool.query(`
+      SELECT price as value, timestamp 
       FROM time_series 
       WHERE timestamp BETWEEN $1 AND $2
       ORDER BY timestamp DESC 
       LIMIT 1
     `, [yesterdayStart, yesterdayEnd]);
 
-    const latestPrice = latestToday.rows[0] ? Number(latestToday.rows[0].indicator_value) : null;
-    const prevPrice = latestYesterday.rows[0] ? Number(latestYesterday.rows[0].indicator_value) : null;
+    const currentPrice = latestPrice.rows[0] ? Number(latestPrice.rows[0].value) : null;
+    const priceTimestamp = latestPrice.rows[0]?.timestamp || 'N/A';
+    const prevPrice = lastYesterdayPrice.rows[0] ? Number(lastYesterdayPrice.rows[0].value) : null;
+    const prevTimestamp = lastYesterdayPrice.rows[0]?.timestamp || 'N/A';
 
-    if (latestPrice !== null && prevPrice !== null) {
-      const percentChange = ((latestPrice - prevPrice) / prevPrice) * 100;
+    if (currentPrice !== null && prevPrice !== null) {
+      const percentChange = ((currentPrice - prevPrice) / prevPrice) * 100;
+      console.log(`Price check: Current=$${currentPrice.toFixed(2)}, Previous=$${prevPrice.toFixed(2)}, Change=${percentChange.toFixed(2)}%`);
+      
+      // Using fixed threshold for now
+      const THRESHOLD = 0.10;
       
       if (Math.abs(percentChange) >= THRESHOLD) {
         const emailBody = `
-Current Gold Price: $${latestPrice.toFixed(2)}
+GOLD PRICE ALERT - Significant Change Detected
+
+Current Gold Price: $${currentPrice.toFixed(2)}
+Time of Last Update: ${new Date(priceTimestamp).toLocaleString()}
+Previous Day's Last Price: $${prevPrice.toFixed(2)}
+Previous Time: ${new Date(prevTimestamp).toLocaleString()}
 Percentage Change: ${percentChange.toFixed(2)}%
-Previous Price: $${prevPrice.toFixed(2)}
+
+This alert was triggered because the price change exceeded the ${THRESHOLD}% threshold.
         `;
 
         await transporter.sendMail({
           from: process.env.GMAIL_USER,
           to: EMAIL_RECIPIENTS,
-          subject: 'Gold Price Alert',
+          subject: `Gold Price Alert - ${percentChange.toFixed(2)}% Change`,
           text: emailBody
         });
 
-        console.log(`Alert sent: ${percentChange.toFixed(2)}% change detected`);
+        console.log(`Alert email sent - ${percentChange.toFixed(2)}% change detected`);
       }
     }
   } catch (err) {
@@ -79,7 +117,7 @@ Previous Price: $${prevPrice.toFixed(2)}
   }
 }
 
-// Run at 5 minutes past every hour
-cron.schedule('5 * * * *', checkPriceChange);
+// Run every 5 minutes
+cron.schedule('*/5 * * * *', checkPriceChange);
 
 console.log('Price monitor service started');

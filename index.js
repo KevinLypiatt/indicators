@@ -83,7 +83,7 @@ app.get('/dashboard', async (req, res) => {
                 </span>
               </p>
               <div>
-                <a href="/settings" class="btn btn-primary">Settings</a>
+                <a href="/settings" class="btn btn-primary">Parameters</a>
                 <a href="/data" class="btn btn-info ms-2">Manage Data</a>
               </div>
             </div>
@@ -207,7 +207,7 @@ app.get('/settings', async (req, res) => {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Settings - Gold Price Dashboard</title>
+        <title>Parameters - Gold Price Dashboard</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
       </head>
       <body class="bg-light">
@@ -223,7 +223,7 @@ app.get('/settings', async (req, res) => {
                            value="${param.param_value}" required>
                   </div>
                 `).join('')}
-                <button type="submit" class="btn btn-primary">Save Settings</button>
+                <button type="submit" class="btn btn-primary">Save Parameters</button>
                 <a href="/dashboard" class="btn btn-secondary">Back to Dashboard</a>
               </form>
             </div>
@@ -267,6 +267,26 @@ app.get('/api/prices', async (req, res) => {
   } catch (err) {
     console.error('Error fetching price history:', err.stack);
     res.status(500).json({ error: 'Error fetching price history' });
+  }
+});
+
+app.get('/parameters', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT param_name, param_value FROM parameters ORDER BY param_name');
+    console.log('Parameters query result:', result.rows);  // Debug logging
+    
+    if (result.rows.length === 0) {
+      return res.json({ message: 'No parameters found', data: [] });
+    }
+    
+    res.json({ 
+      message: 'Parameters retrieved successfully',
+      count: result.rows.length,
+      data: result.rows 
+    });
+  } catch (err) {
+    console.error('Error fetching parameters:', err);
+    res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 });
 
