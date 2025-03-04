@@ -2,7 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const { Pool } = require('pg');
 const moment = require('moment');
-require('./services/priceMonitor');
 
 const app = express();
 const port = process.env.PORT || 3000;
