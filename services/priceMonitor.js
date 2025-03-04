@@ -57,7 +57,7 @@ async function checkPriceChange() {
 
     // Get latest price
     const latestPrice = await pool.query(`
-      SELECT price as value, timestamp 
+      SELECT indicator_value, timestamp 
       FROM time_series 
       ORDER BY timestamp DESC 
       LIMIT 1
@@ -70,16 +70,16 @@ async function checkPriceChange() {
     const yesterdayEnd = new Date(yesterday.setHours(23, 59, 59, 999));
 
     const lastYesterdayPrice = await pool.query(`
-      SELECT price as value, timestamp 
+      SELECT indicator_value, timestamp 
       FROM time_series 
       WHERE timestamp BETWEEN $1 AND $2
       ORDER BY timestamp DESC 
       LIMIT 1
     `, [yesterdayStart, yesterdayEnd]);
 
-    const currentPrice = latestPrice.rows[0] ? Number(latestPrice.rows[0].value) : null;
+    const currentPrice = latestPrice.rows[0] ? Number(latestPrice.rows[0].indicator_value) : null;
     const priceTimestamp = latestPrice.rows[0]?.timestamp || 'N/A';
-    const prevPrice = lastYesterdayPrice.rows[0] ? Number(lastYesterdayPrice.rows[0].value) : null;
+    const prevPrice = lastYesterdayPrice.rows[0] ? Number(lastYesterdayPrice.rows[0].indicator_value) : null;
     const prevTimestamp = lastYesterdayPrice.rows[0]?.timestamp || 'N/A';
 
     if (currentPrice !== null && prevPrice !== null) {
