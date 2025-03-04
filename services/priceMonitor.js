@@ -118,6 +118,6 @@ This alert was triggered because the price change exceeded the ${THRESHOLD}% thr
 }
 
 // Run every 5 minutes
-cron.schedule('*/5 * * * *', checkPriceChange);
+cron.schedule('5 * * * *', checkPriceChange);
 
-console.log('Price monitor service started');
+console.log('Price monitor service started - 5mins past the hour');
