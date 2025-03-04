@@ -8,6 +8,7 @@
     "start": "node index.js",
     "collect": "node data_collector.js",
     "dev": "concurrently \"npm run start\" \"npm run collect\"",
+    "prod": "node data_collector.js & node index.js"
     "test": "jest",
     "lint": "eslint ."
   },
