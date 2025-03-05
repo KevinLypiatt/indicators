@@ -318,6 +318,29 @@
             }
         }
 
+        function calculateYAxisRange(data) {
+            if (!data || data.length === 0) {
+                return { min: 0, max: 1 }; // Default range
+            }
+
+            const values = data.map(d => d.y);
+            let min = Math.min(...values);
+            let max = Math.max(...values);
+
+            // Add some padding
+            const range = max - min;
+            const padding = range * 0.1; // 10% padding
+
+            min -= padding;
+            max += padding;
+
+            // Round to nearest 0.5
+            min = Math.floor(min * 2) / 2;
+            max = Math.ceil(max * 2) / 2;
+
+            return { min, max };
+        }
+
         async function updateCharts() {
             clearError();
             setLoading(true);
@@ -327,6 +350,7 @@
                     const goldData = await fetchData('gold');
                     const previousGoldData = await fetchPreviousData('gold');
                     if (goldData.length) {
+                        const yRange = calculateYAxisRange(goldData);
                         await Plotly.newPlot('goldChart', [{
                             x: goldData.map(d => d.x),
                             y: goldData.map(d => d.y),
@@ -337,7 +361,7 @@
                             margin: { t: 0, b: 30, l: 52, r: 10 },
                             height: 200,
                             yaxis: {
-                                range: [2800, 3100],
+                                range: [yRange.min, yRange.max],
                                 tickprefix: '$',
                                 tickformat: '.2f'
                             }
@@ -348,6 +372,7 @@
                     const bitcoinData = await fetchData('bitcoin');
                     const previousBitcoinData = await fetchPreviousData('bitcoin');
                     if (bitcoinData.length) {
+                        const yRange = calculateYAxisRange(bitcoinData);
                         await Plotly.newPlot('bitcoinChart', [{
                             x: bitcoinData.map(d => d.x),
                             y: bitcoinData.map(d => d.y),
@@ -358,7 +383,7 @@
                             margin: { t: 0, b: 30, l: 70, r: 10 },
                             height: 200,
                             yaxis: {
-                                range: [80000, 110000],
+                                range: [yRange.min, yRange.max],
                                 tickprefix: '$',
                                 tickformat: '.2f'
                             }
@@ -368,30 +393,31 @@
                 }
 
                 if (bondsGrid.style.display !== 'none') {
-                    const [gilt2y, gilt10y, gilt30y] = await Promise.all([
-                        fetchData('gilt_2y'),
-                        fetchData('gilt_10y'),
-                        fetchData('gilt_30y')
-                    ]);
+                    const gilt2yData = await fetchData('gilt_2y');
+                    const gilt10yData = await fetchData('gilt_10y');
+                    const gilt30yData = await fetchData('gilt_30y');
+
+                    const allGiltData = [...gilt2yData, ...gilt10yData, ...gilt30yData];
+                    const giltYRange = calculateYAxisRange(allGiltData);
 
                     await Plotly.newPlot('giltsChart', [
                         {
-                            x: gilt2y.map(d => d.x),
-                            y: gilt2y.map(d => d.y),
+                            x: gilt2yData.map(d => d.x),
+                            y: gilt2yData.map(d => d.y),
                             type: 'scatter',
                             name: '2Y',
                             line: { color: '#1f77b4' }
                         },
                         {
-                            x: gilt10y.map(d => d.x),
-                            y: gilt10y.map(d => d.y),
+                            x: gilt10yData.map(d => d.x),
+                            y: gilt10yData.map(d => d.y),
                             type: 'scatter',
                             name: '10Y',
                             line: { color: '#2ca02c' }
                         },
                         {
-                            x: gilt30y.map(d => d.x),
-                            y: gilt30y.map(d => d.y),
+                            x: gilt30yData.map(d => d.x),
+                            y: gilt30yData.map(d => d.y),
                             type: 'scatter',
                             name: '30Y',
                             line: { color: '#ff7f0e' }
@@ -400,14 +426,17 @@
                         margin: { t: 0, b: 30, l: 40, r: 10 },
                         height: 200,
                         yaxis: {
-                            range: [3, 6],
+                            range: [giltYRange.min, giltYRange.max],
                             ticksuffix: '%',
                             tickformat: '.2f'
                         }
                     });
+                }
 
+                if (bondsGrid.style.display !== 'none') {
                     const treasuryData = await fetchData('treasury_10y');
                     if (treasuryData.length) {
+                        const treasuryYRange = calculateYAxisRange(treasuryData);
                         await Plotly.newPlot('treasuryChart', [{
                             x: treasuryData.map(d => d.x),
                             y: treasuryData.map(d => d.y),
@@ -418,7 +447,7 @@
                             margin: { t: 0, b: 30, l: 40, r: 10 },
                             height: 200,
                             yaxis: {
-                                range: [3.5, 4.5],
+                                range: [treasuryYRange.min, treasuryYRange.max],
                                 ticksuffix: '%',
                                 tickformat: '.2f'
                             }

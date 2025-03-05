@@ -18,6 +18,9 @@ const alertTracker = {
   bitcoin: { lastPrice: null, lastDate: null }
 };
 
+// Track if daily opening email has been sent
+let dailyEmailSent = false;
+
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
@@ -32,17 +35,19 @@ async function getMonitoringSettings() {
   const result = await pool.query(`
     SELECT param_name, param_value
     FROM parameters 
-    WHERE param_name IN ('start_time', 'end_time')
+    WHERE param_name IN ('start_time', 'end_time', 'daily_email_time')
   `);
   
   const settings = {
     startTime: '08:00',  // default values
-    endTime: '17:00'
+    endTime: '17:00',
+    dailyEmailTime: '08:05' // Default to 8:05 AM
   };
 
   result.rows.forEach(row => {
     if (row.param_name === 'start_time') settings.startTime = row.param_value;
     if (row.param_name === 'end_time') settings.endTime = row.param_value;
+    if (row.param_name === 'daily_email_time') settings.dailyEmailTime = row.param_value;
   });
   
   console.log('Monitoring settings:', settings);
@@ -65,6 +70,58 @@ async function getLastClosingPrice(indicatorType, now) {
   `, [indicatorType, yesterdayStart, yesterdayEnd]);
 
   return result.rows[0] ? Number(result.rows[0].indicator_value) : null;
+}
+
+async function getOpeningPrice(indicatorType, now) {
+  const todayStart = new Date(now.setHours(0, 0, 0, 0));
+  const todayEnd = new Date(now.setHours(23, 59, 59, 999));
+
+  const result = await pool.query(`
+    SELECT indicator_value, timestamp 
+    FROM time_series 
+    WHERE indicator_type = $1
+    AND timestamp BETWEEN $2 AND $3
+    ORDER BY timestamp ASC 
+    LIMIT 1
+  `, [indicatorType, todayStart, todayEnd]);
+
+  return result.rows[0] ? Number(result.rows[0].indicator_value) : null;
+}
+
+async function sendDailyOpeningEmail(settings, now) {
+  try {
+    const goldOpeningPrice = await getOpeningPrice('gold', new Date(now));
+    const bitcoinOpeningPrice = await getOpeningPrice('bitcoin', new Date(now));
+    const goldClosingPrice = await getLastClosingPrice('gold', new Date(now));
+    const bitcoinClosingPrice = await getLastClosingPrice('bitcoin', new Date(now));
+
+    if (goldOpeningPrice === null || bitcoinOpeningPrice === null || goldClosingPrice === null || bitcoinClosingPrice === null) {
+      console.log('Not enough data to send daily opening email.');
+      return;
+    }
+
+    const goldPercentChange = ((goldOpeningPrice - goldClosingPrice) / goldClosingPrice) * 100;
+    const bitcoinPercentChange = ((bitcoinOpeningPrice - bitcoinClosingPrice) / bitcoinClosingPrice) * 100;
+
+    const emailBody = `
+DAILY OPENING PRICES AND CHANGES FROM PREVIOUS CLOSE
+
+Gold Opening Price: $${goldOpeningPrice.toFixed(2)} (Change: ${goldPercentChange.toFixed(2)}%)
+Bitcoin Opening Price: $${bitcoinOpeningPrice.toFixed(2)} (Change: ${bitcoinPercentChange.toFixed(2)}%)
+    `;
+
+    await transporter.sendMail({
+      from: process.env.GMAIL_USER,
+      to: EMAIL_RECIPIENTS,
+      subject: 'Daily Opening Prices',
+      text: emailBody
+    });
+
+    console.log('Daily opening prices email sent.');
+    dailyEmailSent = true; // Prevent resending
+  } catch (err) {
+    console.error('Error sending daily opening email:', err);
+  }
 }
 
 async function checkIndicatorPrice(indicatorType, settings, now) {
@@ -95,7 +152,14 @@ async function checkIndicatorPrice(indicatorType, settings, now) {
       const basePrice = alertTracker[indicatorType].lastPrice ? 'last alert price' : 'previous close';
       console.log(`${indicatorType} check: Current=$${currentPrice.toFixed(2)}, ${basePrice}=$${comparisonPrice.toFixed(2)}, Change=${percentChange.toFixed(2)}%`);
       
-      const THRESHOLD = Number(process.env.PRICE_CHANGE_THRESHOLD) || 0.25;
+      let THRESHOLD;
+      if (indicatorType === 'gold') {
+        THRESHOLD = Number(process.env.PRICE_CHANGE_THRESHOLD_GOLD) || 0.25;
+      } else if (indicatorType === 'bitcoin') {
+        THRESHOLD = Number(process.env.PRICE_CHANGE_THRESHOLD_BITCOIN) || 1.00;
+      } else {
+        THRESHOLD = 0.25; // Default threshold
+      }
       
       if (Math.abs(percentChange) >= THRESHOLD) {
         const emailBody = `
@@ -140,6 +204,15 @@ async function checkPriceChange() {
       return;
     }
 
+    // Send daily email
+    const dailyEmailTime = settings.dailyEmailTime;
+    const [dailyEmailHour, dailyEmailMinute] = dailyEmailTime.split(':');
+    const isDailyEmailTime = now.getHours() == dailyEmailHour && now.getMinutes() == dailyEmailMinute;
+
+    if (!dailyEmailSent && isDailyEmailTime) {
+      await sendDailyOpeningEmail(settings, now);
+    }
+
     // Monitor both gold and bitcoin
     await checkIndicatorPrice('gold', settings, now);
     await checkIndicatorPrice('bitcoin', settings, now);
@@ -147,6 +220,12 @@ async function checkPriceChange() {
     console.error('Error in price monitor:', err);
   }
 }
+
+// Reset daily email flag at midnight
+cron.schedule('0 0 * * *', () => {
+  dailyEmailSent = false;
+  console.log('Daily email flag reset.');
+});
 
 // Run at 5 minutes past every hour
 cron.schedule('5 * * * *', checkPriceChange);
