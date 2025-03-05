@@ -74,7 +74,7 @@ const fetchIndicator = async (key, config) => {
     const response = await axios.post(
       'https://api.perplexity.ai/chat/completions',
       {
-        model: 'llama-3.1-sonar-small-128k-online',
+        model: 'llama-3.1-sonar-large-128k-online',
         messages: [{ role: 'user', content: config.prompt }]
       },
       {
@@ -88,12 +88,23 @@ const fetchIndicator = async (key, config) => {
     const content = response.data.choices[0].message.content;
     console.log(`Raw ${key} response:`, content);
     
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      console.error(`No JSON found in ${key} response`);
+    // Enhanced JSON extraction
+    let jsonContent = content;
+    if (content.includes('```')) {
+      const matches = content.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+      jsonContent = matches ? matches[1] : content;
+    }
+    
+    // Clean any remaining whitespace and attempt to parse
+    jsonContent = jsonContent.trim();
+    
+    try {
+      return JSON.parse(jsonContent);
+    } catch (parseError) {
+      console.error(`JSON parse error for ${key}:`, parseError.message);
+      console.error('Attempted to parse:', jsonContent);
       return null;
     }
-    return JSON.parse(jsonMatch[0]);
   } catch (err) {
     console.error(`Error fetching ${key}:`, err.message);
     return null;
@@ -119,7 +130,7 @@ const dataCollector = async () => {
     // Store gold price and bitcoin
     const commodities = {
       'gold_usd': ['gold', 'USA'],
-      'bitcoin': ['bitcoin', 'USA']  // Changed from 'bitcoin_usd'
+      'bitcoin': ['bitcoin', 'USA']
     };
 
     for (const [key, [type, country]] of Object.entries(commodities)) {
@@ -137,9 +148,9 @@ const dataCollector = async () => {
 
     // Store UK bond yields and US treasury
     const indicators = {
-      'gilt_2yr': ['gilt_2y', 'UK'],  // Changed from 'uk_2yr'
-      'gilt_10yr': ['gilt_10y', 'UK'], // Changed from 'uk_10yr'
-      'gilt_30yr': ['gilt_30y', 'UK'], // Changed from 'uk_30yr'
+      'gilt_2yr': ['gilt_2y', 'UK'],
+      'gilt_10yr': ['gilt_10y', 'UK'],
+      'gilt_30yr': ['gilt_30y', 'UK'],
       'us_10yr': ['treasury_10y', 'USA']
     };
 
