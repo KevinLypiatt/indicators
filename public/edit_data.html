@@ -1,0 +1,236 @@
+.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edit Time Series Data</title>
+    <link href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.min.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .back-button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        table {
+            width: 100%;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+        }
+        .edit-button, .delete-button {
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 0 4px;
+        }
+        .edit-button {
+            background: #2ecc71;
+            color: white;
+        }
+        .delete-button {
+            background: #e74c3c;
+            color: white;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+        }
+        .modal-content {
+            background: white;
+            margin: 15% auto;
+            padding: 20px;
+            width: 80%;
+            max-width: 500px;
+            border-radius: 8px;
+        }
+        .modal input {
+            width: 100%;
+            padding: 8px;
+            margin: 8px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .modal-buttons {
+            text-align: right;
+            margin-top: 16px;
+        }
+        .modal-buttons button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-left: 8px;
+        }
+        .save-button {
+            background: #2ecc71;
+            color: white;
+        }
+        .cancel-button {
+            background: #95a5a6;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Edit Time Series Data</h1>
+            <a href="/" class="back-button">Return to Dashboard</a>
+        </div>
+        <table id="timeSeriesTable">
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Type</th>
+                    <th>Country</th>
+                    <th>Value</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+            </tbody>
+        </table>
+    </div>
+
+    <div id="editModal" class="modal">
+        <div class="modal-content">
+            <h2>Edit Record</h2>
+            <input type="hidden" id="editId">
+            <input type="datetime-local" id="editTimestamp">
+            <input type="text" id="editType" readonly>
+            <input type="text" id="editCountry" readonly>
+            <input type="number" id="editValue" step="0.01">
+            <div class="modal-buttons">
+                <button class="cancel-button" onclick="closeModal()">Cancel</button>
+                <button class="save-button" onclick="saveEdit()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+    <script>
+        let table;
+        
+        $(document).ready(function() {
+            table = $('#timeSeriesTable').DataTable({
+                ajax: {
+                    url: '/api/timeseries',
+                    dataSrc: ''
+                },
+                order: [[0, 'desc']],
+                columns: [
+                    { 
+                        data: 'timestamp',
+                        render: function(data) {
+                            return new Date(data).toLocaleString();
+                        }
+                    },
+                    { data: 'indicator_type' },
+                    { data: 'indicator_country' },
+                    { 
+                        data: 'indicator_value',
+                        render: function(data) {
+                            return parseFloat(data).toFixed(2);
+                        }
+                    },
+                    {
+                        data: null,
+                        render: function(data) {
+                            return `
+                                <button class="edit-button" onclick="editRecord(${JSON.stringify(data).replace(/"/g, '&quot;')})">Edit</button>
+                                <button class="delete-button" onclick="deleteRecord(${data.id})">Delete</button>
+                            `;
+                        }
+                    }
+                ]
+            });
+        });
+
+        function editRecord(data) {
+            document.getElementById('editId').value = data.id;
+            document.getElementById('editTimestamp').value = new Date(data.timestamp).toISOString().slice(0, 16);
+            document.getElementById('editType').value = data.indicator_type;
+            document.getElementById('editCountry').value = data.indicator_country;
+            document.getElementById('editValue').value = data.indicator_value;
+            document.getElementById('editModal').style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('editModal').style.display = 'none';
+        }
+
+        async function saveEdit() {
+            const id = document.getElementById('editId').value;
+            const timestamp = document.getElementById('editTimestamp').value;
+            const value = document.getElementById('editValue').value;
+
+            try {
+                const response = await fetch(`/api/timeseries/${id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        timestamp: new Date(timestamp).toISOString(),
+                        value: parseFloat(value)
+                    })
+                });
+
+                if (!response.ok) throw new Error('Failed to update record');
+
+                table.ajax.reload();
+                closeModal();
+            } catch (error) {
+                alert('Error updating record: ' + error.message);
+            }
+        }
+
+        async function deleteRecord(id) {
+            if (!confirm('Are you sure you want to delete this record?')) return;
+
+            try {
+                const response = await fetch(`/api/timeseries/${id}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) throw new Error('Failed to delete record');
+
+                table.ajax.reload();
+            } catch (error) {
+                alert('Error deleting record: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>
