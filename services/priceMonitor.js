@@ -3,11 +3,66 @@ const cron = require('node-cron');
 const { Pool } = require('pg');
 require('dotenv').config();
 
-// Add tracking variables
+const pool = new Pool({
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT,
+  ssl: { rejectUnauthorized: false }
+});
+
+// Track last alert details in memory
 let lastAlertPrice = null;
 let lastAlertDate = null;
 
-// ...existing connection code...
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD
+  }
+});
+
+const EMAIL_RECIPIENTS = process.env.ALERT_EMAILS.split(',');
+
+async function getMonitoringSettings() {
+  const result = await pool.query(`
+    SELECT param_name, param_value
+    FROM parameters 
+    WHERE param_name IN ('start_time', 'end_time')
+  `);
+  
+  const settings = {
+    startTime: '08:00',  // default values
+    endTime: '17:00'
+  };
+
+  result.rows.forEach(row => {
+    if (row.param_name === 'start_time') settings.startTime = row.param_value;
+    if (row.param_name === 'end_time') settings.endTime = row.param_value;
+  });
+  
+  console.log('Monitoring settings:', settings);
+  return settings;
+}
+
+async function getLastClosingPrice(now) {
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStart = new Date(yesterday.setHours(0, 0, 0, 0));
+  const yesterdayEnd = new Date(yesterday.setHours(23, 59, 59, 999));
+
+  const result = await pool.query(`
+    SELECT indicator_value, timestamp 
+    FROM time_series 
+    WHERE timestamp BETWEEN $1 AND $2
+    ORDER BY timestamp DESC 
+    LIMIT 1
+  `, [yesterdayStart, yesterdayEnd]);
+
+  return result.rows[0] ? Number(result.rows[0].indicator_value) : null;
+}
 
 async function checkPriceChange() {
   try {
@@ -77,24 +132,6 @@ Reference price was ${lastAlertPrice ? 'last alert price' : 'previous day close'
   } catch (err) {
     console.error('Error in price monitor:', err);
   }
-}
-
-// Helper function to get previous day's closing price
-async function getLastClosingPrice(now) {
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStart = new Date(yesterday.setHours(0, 0, 0, 0));
-  const yesterdayEnd = new Date(yesterday.setHours(23, 59, 59, 999));
-
-  const result = await pool.query(`
-    SELECT indicator_value, timestamp 
-    FROM time_series 
-    WHERE timestamp BETWEEN $1 AND $2
-    ORDER BY timestamp DESC 
-    LIMIT 1
-  `, [yesterdayStart, yesterdayEnd]);
-
-  return result.rows[0] ? Number(result.rows[0].indicator_value) : null;
 }
 
 // Run at 5 minutes past every hour
