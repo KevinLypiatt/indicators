@@ -139,7 +139,7 @@ const storeIndicator = async (type, country, value) => {
   }
 };
 
-const dataCollector = async () => {
+const dataCollector = async (collectBonds = true) => {
   try {
     let result = {};
 
@@ -166,17 +166,19 @@ const dataCollector = async () => {
       await storeIndicator(type, country, value);
     }
 
-    // Store UK bond yields and US treasury
-    const indicators = {
-      'gilt_2yr': ['gilt_2y', 'UK'],
-      'gilt_10yr': ['gilt_10y', 'UK'],
-      'gilt_30yr': ['gilt_30y', 'UK'],
-      'us_10yr': ['treasury_10y', 'USA']
-    };
+    // Store UK bond yields and US treasury only if collectBonds is true
+    if (collectBonds) {
+      const indicators = {
+        'gilt_2yr': ['gilt_2y', 'UK'],
+        'gilt_10yr': ['gilt_10y', 'UK'],
+        'gilt_30yr': ['gilt_30y', 'UK'],
+        'us_10yr': ['treasury_10y', 'USA']
+      };
 
-    for (const [key, [type, country]] of Object.entries(indicators)) {
-      const value = Number(result[key]);
-      await storeIndicator(type, country, value);
+      for (const [key, [type, country]] of Object.entries(indicators)) {
+        const value = Number(result[key]);
+        await storeIndicator(type, country, value);
+      }
     }
   } catch (err) {
     console.error('Error in data collection:', err.message);
@@ -192,10 +194,10 @@ const startCollector = async () => {
     console.log('Starting AI data collector...');
     cron.schedule('0 * * * *', async () => {
       console.log('Running scheduled data collection...');
-      await dataCollector();
+      await dataCollector(false); // Collect without bonds data
     });
-    // Initial data collection
-    await dataCollector();
+    // Initial data collection with bonds data
+    await dataCollector(true);
   } catch (err) {
     console.error('Failed to start data collector:', err.stack);
     process.exit(1);
