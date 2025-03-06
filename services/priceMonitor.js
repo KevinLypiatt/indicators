@@ -3,6 +3,14 @@ const cron = require('node-cron');
 const { Pool } = require('pg');
 require('dotenv').config();
 
+// Validate environment variables
+const requiredEnvVars = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_PORT', 'GMAIL_USER', 'GMAIL_APP_PASSWORD', 'ALERT_EMAILS'];
+requiredEnvVars.forEach((envVar) => {
+  if (!process.env[envVar]) {
+    throw new Error(`Missing required environment variable: ${envVar}`);
+  }
+});
+
 const pool = new Pool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
@@ -163,7 +171,7 @@ async function checkIndicatorPrice(indicatorType, settings, now) {
       
       if (Math.abs(percentChange) >= THRESHOLD) {
         const emailBody = `
-${indicatorType.toUpperCase()} PRICE ALERT - Significant Change Detected
+${indicatorType.toUpperCase()} PRICE ALERT: Significant Change Detected
 
 Current ${indicatorType} Price: $${currentPrice.toFixed(2)}
 Time of Last Update: ${new Date(priceTimestamp).toLocaleString()}
@@ -177,7 +185,7 @@ Reference price was ${alertTracker[indicatorType].lastPrice ? 'last alert price'
         await transporter.sendMail({
           from: process.env.GMAIL_USER,
           to: EMAIL_RECIPIENTS,
-          subject: `${indicatorType.toUpperCase()} Price Alert - ${percentChange.toFixed(2)}% Change`,
+          subject: `${indicatorType.toUpperCase()} Price Alert: ${percentChange.toFixed(2)}% Change`,
           text: emailBody
         });
 

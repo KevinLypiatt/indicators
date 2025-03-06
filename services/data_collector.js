@@ -3,6 +3,19 @@ const { Pool } = require('pg');
 const cron = require('node-cron');
 const axios = require('axios');
 
+// Validate environment variables
+const requiredEnvVars = [
+  'DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_PORT', 
+  'PROMPT_GOLD', 'PROMPT_BITCOIN', 'PROMPT_UK_GILTS', 'PROMPT_US_TREASURY', 
+  'PERPLEXITY_KEY'
+];
+requiredEnvVars.forEach((varName) => {
+  if (!process.env[varName]) {
+    console.error(`Missing required environment variable: ${varName}`);
+    process.exit(1);
+  }
+});
+
 const pool = new Pool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
@@ -107,7 +120,22 @@ const fetchIndicator = async (key, config) => {
     }
   } catch (err) {
     console.error(`Error fetching ${key}:`, err.message);
+    if (err.response) {
+      console.error('API response error:', err.response.data);
+    }
     return null;
+  }
+};
+
+const storeIndicator = async (type, country, value) => {
+  if (!isNaN(value)) {
+    await pool.query(
+      'INSERT INTO time_series (indicator_type, indicator_country, indicator_value) VALUES ($1, $2, $3)',
+      [type, country, value.toFixed(2)]
+    );
+    console.log(`${type} ${value.toFixed(2)} stored at ${new Date().toISOString()}`);
+  } else {
+    console.error(`Failed to parse ${type}:`, value);
   }
 };
 
@@ -135,15 +163,7 @@ const dataCollector = async () => {
 
     for (const [key, [type, country]] of Object.entries(commodities)) {
       const value = Number(result[key]);
-      if (!isNaN(value)) {
-        await pool.query(
-          'INSERT INTO time_series (indicator_type, indicator_country, indicator_value) VALUES ($1, $2, $3)',
-          [type, country, value.toFixed(2)]
-        );
-        console.log(`${type} ${value.toFixed(2)} stored at ${new Date().toISOString()}`);
-      } else {
-        console.error(`Failed to parse ${type}:`, result[key]);
-      }
+      await storeIndicator(type, country, value);
     }
 
     // Store UK bond yields and US treasury
@@ -156,15 +176,7 @@ const dataCollector = async () => {
 
     for (const [key, [type, country]] of Object.entries(indicators)) {
       const value = Number(result[key]);
-      if (!isNaN(value)) {
-        await pool.query(
-          'INSERT INTO time_series (indicator_type, indicator_country, indicator_value) VALUES ($1, $2, $3)',
-          [type, country, value.toFixed(2)]
-        );
-        console.log(`${type} ${value.toFixed(2)} stored at ${new Date().toISOString()}`);
-      } else {
-        console.error(`Failed to parse ${type}:`, result[key]);
-      }
+      await storeIndicator(type, country, value);
     }
   } catch (err) {
     console.error('Error in data collection:', err.message);

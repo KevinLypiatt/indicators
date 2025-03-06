@@ -31,7 +31,7 @@
             border-radius: 4px;
             border: 1px solid #ddd;
         }
-        .refresh-button, .edit-data-button {
+        .button {
             background: #4CAF50;
             color: white;
             border: none;
@@ -43,7 +43,7 @@
         .edit-data-button {
             background: #3498db;
         }
-        .refresh-button:disabled {
+        .button:disabled {
             background: #cccccc;
         }
         .grid {
@@ -141,21 +141,21 @@
 </head>
 <body>
     <div class="container">
-        <div class="header">
+        <header class="header">
             <h1>Financial Indicators Dashboard</h1>
             <div class="controls">
-                <select id="indicatorSelect" class="indicator-select">
+                <select id="indicatorSelect" class="indicator-select" aria-label="Select Indicator">
                     <option value="all">All Indicators</option>
                     <option value="commodities">Commodities</option>
                     <option value="bonds">Bonds</option>
                 </select>
-                <button id="refreshButton" class="refresh-button">Refresh Data</button>
-                <a href="/edit_data.html" class="edit-data-button">Edit Data</a>
+                <button id="refreshButton" class="button" aria-label="Refresh Data">Refresh Data</button>
+                <a href="/edit_data.html" class="button edit-data-button" aria-label="Edit Data">Edit Data</a>
             </div>
-        </div>
-        <div id="errorMessage" class="error-message"></div>
-        <div id="commoditiesGrid" class="grid">
-            <div class="card">
+        </header>
+        <div id="errorMessage" class="error-message" role="alert"></div>
+        <section id="commoditiesGrid" class="grid">
+            <article class="card">
                 <h2>Gold Price (USD)</h2>
                 <div id="goldSummary" class="price-summary">
                     <div class="current">Loading...</div>
@@ -169,8 +169,8 @@
                     </div>
                 </div>
                 <div id="goldChart"></div>
-            </div>
-            <div class="card">
+            </article>
+            <article class="card">
                 <h2>Bitcoin Price (USD)</h2>
                 <div id="bitcoinSummary" class="price-summary">
                     <div class="current">Loading...</div>
@@ -184,19 +184,32 @@
                     </div>
                 </div>
                 <div id="bitcoinChart"></div>
-            </div>
-        </div>
-        <div id="bondsGrid" class="grid">
-            <div class="card">
+            </article>
+        </section>
+        <section id="bondsGrid" class="grid">
+            <article class="card">
                 <h2>UK Gilt Yields (%)</h2>
-                <div id="giltsChart"></div>
-            </div>
-            <div class="card">
+                <div class="price-summary">
+                    <div class="current" id="gilt2yCurrent">Loading...</div>
+                    <div class="change" id="gilt2yChange"></div>
+                </div>
+                <div class="price-summary">
+                    <div class="current" id="gilt10yCurrent">Loading...</div>
+                    <div class="change" id="gilt10yChange"></div>
+                </div>
+                <div class="price-summary">
+                    <div class="current" id="gilt30yCurrent">Loading...</div>
+                    <div class="change" id="gilt30yChange"></div>
+                </div>
+            </article>
+            <article class="card">
                 <h2>US Treasury Yield (%)</h2>
-                <div id="treasuryChart"></div>
-                <div class="latest-value" id="treasuryValue"></div>
-            </div>
-        </div>
+                <div class="price-summary">
+                    <div class="current" id="treasuryCurrent">Loading...</div>
+                    <div class="change" id="treasuryChange"></div>
+                </div>
+            </article>
+        </section>
     </div>
 
     <script>
@@ -318,6 +331,27 @@
             }
         }
 
+        async function updateBondsSummary(type, data, previousDay) {
+            if (!data.length) return;
+
+            const current = document.getElementById(`${type}Current`);
+            const change = document.getElementById(`${type}Change`);
+
+            const currentPrice = data[0].y;
+            const previousPrice = previousDay ? previousDay.y : null;
+            
+            current.textContent = `${currentPrice.toFixed(2)}%`;
+
+            if (previousPrice) {
+                const percentChange = ((currentPrice - previousPrice) / previousPrice) * 100;
+                change.textContent = `${percentChange >= 0 ? '▲' : '▼'} ${Math.abs(percentChange).toFixed(2)}% from yesterday`;
+                change.className = `change ${percentChange >= 0 ? 'positive' : 'negative'}`;
+            } else {
+                change.textContent = 'No previous data available';
+                change.className = 'change';
+            }
+        }
+
         function calculateYAxisRange(data) {
             if (!data || data.length === 0) {
                 return { min: 0, max: 1 }; // Default range
@@ -394,69 +428,24 @@
 
                 if (bondsGrid.style.display !== 'none') {
                     const gilt2yData = await fetchData('gilt_2y');
+                    const previousGilt2yData = await fetchPreviousData('gilt_2y');
+                    updateBondsSummary('gilt2y', gilt2yData, previousGilt2yData);
+
                     const gilt10yData = await fetchData('gilt_10y');
+                    const previousGilt10yData = await fetchPreviousData('gilt_10y');
+                    updateBondsSummary('gilt10y', gilt10yData, previousGilt10yData);
+
                     const gilt30yData = await fetchData('gilt_30y');
+                    const previousGilt30yData = await fetchPreviousData('gilt_30y');
+                    updateBondsSummary('gilt30y', gilt30yData, previousGilt30yData);
 
-                    const allGiltData = [...gilt2yData, ...gilt10yData, ...gilt30yData];
-                    const giltYRange = calculateYAxisRange(allGiltData);
-
-                    await Plotly.newPlot('giltsChart', [
-                        {
-                            x: gilt2yData.map(d => d.x),
-                            y: gilt2yData.map(d => d.y),
-                            type: 'scatter',
-                            name: '2Y',
-                            line: { color: '#1f77b4' }
-                        },
-                        {
-                            x: gilt10yData.map(d => d.x),
-                            y: gilt10yData.map(d => d.y),
-                            type: 'scatter',
-                            name: '10Y',
-                            line: { color: '#2ca02c' }
-                        },
-                        {
-                            x: gilt30yData.map(d => d.x),
-                            y: gilt30yData.map(d => d.y),
-                            type: 'scatter',
-                            name: '30Y',
-                            line: { color: '#ff7f0e' }
-                        }
-                    ], {
-                        margin: { t: 0, b: 30, l: 40, r: 10 },
-                        height: 200,
-                        yaxis: {
-                            range: [giltYRange.min, giltYRange.max],
-                            ticksuffix: '%',
-                            tickformat: '.2f'
-                        }
-                    });
-                }
-
-                if (bondsGrid.style.display !== 'none') {
                     const treasuryData = await fetchData('treasury_10y');
-                    if (treasuryData.length) {
-                        const treasuryYRange = calculateYAxisRange(treasuryData);
-                        await Plotly.newPlot('treasuryChart', [{
-                            x: treasuryData.map(d => d.x),
-                            y: treasuryData.map(d => d.y),
-                            type: 'scatter',
-                            name: 'US 10Y',
-                            line: { color: '#d62728' }
-                        }], {
-                            margin: { t: 0, b: 30, l: 40, r: 10 },
-                            height: 200,
-                            yaxis: {
-                                range: [treasuryYRange.min, treasuryYRange.max],
-                                ticksuffix: '%',
-                                tickformat: '.2f'
-                            }
-                        });
-                        document.getElementById('treasuryValue').textContent = `${treasuryData[0].y.toFixed(2)}%`;
-                    }
+                    const previousTreasuryData = await fetchPreviousData('treasury_10y');
+                    updateBondsSummary('treasury', treasuryData, previousTreasuryData);
                 }
             } catch (error) {
-                showError('Error updating dashboard. Please try again.');
+                console.error('Error updating dashboard:', error);
+                showError(`Error updating dashboard: ${error.message}`);
             } finally {
                 setLoading(false);
             }

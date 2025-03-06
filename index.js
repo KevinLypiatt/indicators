@@ -6,6 +6,14 @@ const path = require('path');
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Validate environment variables
+const requiredEnvVars = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_PORT'];
+requiredEnvVars.forEach((envVar) => {
+  if (!process.env[envVar]) {
+    throw new Error(`Missing required environment variable: ${envVar}`);
+  }
+});
+
 const pool = new Pool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,

@@ -122,7 +122,10 @@
                     <th>Timestamp</th>
                     <th>Type</th>
                     <th>Country</th>
-                    <th>Value</th>
+                    <th>
+                        <input type="number" id="minValue" placeholder="Min" step="0.01">
+                        <input type="number" id="maxValue" placeholder="Max" step="0.01">
+                    </th>
                     <th>Actions</th>
                 </tr>
             </tfoot>
@@ -161,22 +164,26 @@
                 initComplete: function () {
                     this.api().columns().every( function () {
                         var column = this;
-                        var select = $('<select><option value=""></option></select>')
-                            .appendTo( $(column.footer()).empty() )
-                            .on( 'change', function () {
-                                var val = $.fn.dataTable.util.escapeRegex(
-                                    $(this).val()
-                                );
-         
-                                column
-                                    .search( val ? '^'+val+'$' : '', true, false )
-                                    .draw();
+                        if (column.index() === 3) {
+                            $('#minValue, #maxValue').on('keyup change', function () {
+                                column.draw();
+                            });
+                        } else {
+                            var select = $('<select><option value=""></option></select>')
+                                .appendTo( $(column.footer()).empty() )
+                                .on( 'change', function () {
+                                    var val = $.fn.dataTable.util.escapeRegex(
+                                        $(this).val()
+                                    );
+                                    column
+                                        .search( val ? '^'+val+'$' : '', true, false )
+                                        .draw();
+                                } );
+                            column.data().unique().sort().each( function ( d, j ) {
+                                select.append( '<option value="'+d+'">'+d+'</option>' )
                             } );
-         
-                        column.data().unique().sort().each( function ( d, j ) {
-                            select.append( '<option value="'+d+'">'+d+'</option>' )
-                        } );
-                    } );
+                        }
+                    });
                 },
                 order: [[0, 'desc']],
                 columns: [
@@ -205,6 +212,22 @@
                     }
                 ]
             });
+
+            $.fn.dataTable.ext.search.push(
+                function(settings, data, dataIndex) {
+                    var min = parseFloat($('#minValue').val(), 10);
+                    var max = parseFloat($('#maxValue').val(), 10);
+                    var value = parseFloat(data[3]) || 0; // use data for the value column
+
+                    if ((isNaN(min) && isNaN(max)) ||
+                        (isNaN(min) && value <= max) ||
+                        (min <= value && isNaN(max)) ||
+                        (min <= value && value <= max)) {
+                        return true;
+                    }
+                    return false;
+                }
+            );
         });
 
         function editRecord(data) {
